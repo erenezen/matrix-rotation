@@ -1,0 +1,151 @@
+		#ifDef proc::xPblze6
+
+			#set proc::xPblze6::scrpdSize,				64						; [64, 128, 256]
+			#set proc::xPblze6::clkFreq,				100000000				; in Hz
+			
+			#set IOdev::BRAM0::en,						TRUE
+			#set IOdev::BRAM0::type,					mem
+			#set IOdev::BRAM0::size,					4096
+			
+			#set instmem::pageSize,						4096
+			#set instmem::pageCount,					1
+			#set instmem::sharedMemLocation,			loMem	; [ hiMem, loMem ]
+			
+			#set IOdev::BRAM0::value,					instMem
+			
+			#set IOdev::BRAM0::vhdlEn,					TRUE
+			#set IOdev::BRAM0::vhdlEntityName,			"BRAM0"
+			#set IOdev::BRAM0::vhdlTmplFile,			"ROM_form.vhd"
+			#set IOdev::BRAM0::vhdlTargetFile,			"BRAM0.vhd"
+		#endIf
+		
+		#ORG ADDR, 0
+
+; Constants
+LOAD sF, 03         ; Matrix size (n = 3). Change this value for different sizes.
+
+START:
+    ; Initialize matrix in Scratchpad Memory (example 3x3)
+    ; Row 1: [1, 2, 3]
+    LOAD s0, 01
+    WRMEM s0, 00
+    LOAD s0, 02
+    WRMEM s0, 01
+    LOAD s0, 03
+    WRMEM s0, 02
+
+    ; Row 2: [4, 5, 6]
+    LOAD s0, 04
+    WRMEM s0, 03
+    LOAD s0, 05
+    WRMEM s0, 04
+    LOAD s0, 06
+    WRMEM s0, 05
+
+    ; Row 3: [7, 8, 9]
+    LOAD s0, 07
+    WRMEM s0, 06
+    LOAD s0, 08
+    WRMEM s0, 07
+    LOAD s0, 09
+    WRMEM s0, 08
+
+    ; Transpose the matrix
+    LOAD s1, 00       ; i = 0
+Transpose_Loop_Outer:
+    LOAD s2, 00       ; j = 0
+Transpose_Loop_Inner:
+
+    ; Calculate addresses: addr1 = i*n + j, addr2 = j*n + i
+    LOAD s3, s1       ; addr1 = i * n
+    SL0 s3            ; Multiply i by 2 (shift left)
+    ADD s3, s1        ; addr1 = i * 3 (for n=3)
+    ADD s3, s2        ; addr1 += j
+
+    LOAD s4, s2       ; addr2 = j * n
+    SL0 s4            ; Multiply j by 2
+    ADD s4, s2        ; addr2 = j * 3
+    ADD s4, s1        ; addr2 += i
+
+    ; Read values from Scratchpad
+    RDMEM s5, (s3)      ; s5 = matrix[i][j]
+    RDMEM s6, (s4)      ; s6 = matrix[j][i]
+
+    ; Swap values if j > i
+    COMP s2, s1
+    JUMP NC, Skip_Swap ; Skip swap if j <= i
+
+    ; Perform the swap
+    WRMEM s6, (s3)      ; matrix[i][j] = matrix[j][i]
+    WRMEM s5, (s4)      ; matrix[j][i] = matrix[i][j]
+
+Skip_Swap:
+    ; Increment j
+    ADD s2, 01
+    COMP s2, sF       ; Check if j < n
+    JUMP C, Transpose_Loop_Inner
+
+    ; Increment i
+    ADD s1, 01
+    COMP s1, sF       ; Check if i < n
+    JUMP C, Transpose_Loop_Outer
+
+    ; Swap columns to rotate 90 degrees
+    LOAD s1, 00       ; i = 0 (row index)
+    LOAD s2, 00       ; col_left = 0
+    LOAD s3, sF       ; col_right = n - 1
+    SUB s3, 01
+Column_Swap_Outer:
+    LOAD s4, s1       ; j = 0 (row iterator for column swapping)
+Column_Swap_Inner:
+    ; Calculate addresses for left and right columns
+    LOAD s5, s1       ; addr_left = i * n + col_left
+    SL0 s5
+    ADD s5, s1
+    ADD s5, s2
+
+    LOAD s6, s1       ; addr_right = i * n + col_right
+    SL0 s6
+    ADD s6, s1
+    ADD s6, s3
+
+    ; Swap values in left and right columns
+    RDMEM s7, (s5)      ; s7 = matrix[i][col_left]
+    RDMEM s8, (s6)      ; s8 = matrix[i][col_right]
+    WRMEM s8, (s5)      ; matrix[i][col_left] = matrix[i][col_right]
+    WRMEM s7, (s6)      ; matrix[i][col_right] = matrix[i][col_left]
+
+    ; Increment row index
+    ADD s1, 01
+    COMP s1, sF       ; Check if row index < n
+    JUMP C, Column_Swap_Inner
+
+    ; Reset row index and move to next column pair
+    LOAD s1, 00
+    ADD s2, 01        ; col_left++
+    SUB s3, 01        ; col_right--
+    COMP s2, s3       ; Check if col_left < col_right
+    JUMP C, Column_Swap_Outer
+
+    ; Rewrite matrix sequentially in scratchpad
+    LOAD s1, 00       ; i = 0
+    LOAD s2, 00       ; counter = 0
+Rewrite_Loop:
+    ; Calculate address: addr = i*n + j
+    LOAD s3, s1       ; addr = i * n
+    SL0 s3
+    ADD s3, s1
+    ADD s3, s2
+
+    RDMEM s4, (s3)      ; Read value from addr
+    WRMEM s4, (s2)      ; Write it back sequentially to 0x00
+
+    ; Increment counter
+    ADD s2, 01
+    COMP s2, 09       ; Check if counter < n*n (3x3 = 9)
+    JUMP C, Rewrite_Loop
+
+END:
+    JUMP END          ; End program (infinite loop)
+
+
